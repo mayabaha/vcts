@@ -17,9 +17,35 @@ class coincheck:
 
 	def __init__(self):
 		""" constructor """
-		pass
+		self.endpoint = "https://coincheck.com/"
 
-	def fetch_ticker():
+		""" set of ticker """
+		self.tickers = []
+    
+		""" set of boos """
+		self.books = []
+    
+		""" set of trade """
+		self.trades = []
+
+	def get(self, api):
+		""" invoke API to coincheck by GET method """
+		if len(api) == 0:
+			print("ERROR: API is not specified")
+			return
+
+		# invoke
+		url = self.endpoint + api
+		# print("%s: URL=%s" % (sys._getframe().f_code.co_name, url))
+		req = requests.get(url)
+		if req.status_code != 200:
+			print("ERROR: error occurred in invoking, errcd=%d\n" % req.status_code)
+			return
+		
+		item = req.json()
+		return item
+
+	def fetchTicker(self):
 		""" fetch the latest trade information
 	  - 'last' : last price
 	  - 'bid' : the highest price of current buy order
@@ -29,39 +55,48 @@ class coincheck:
 	  - 'volume' : the amount of transactions in 24hr
 	  - 'timestamp' : current time
 		"""
-		req = requests.get("https://coincheck.com/api/ticker")
-		if req.status_code == 200:
-			item = req.json()
+
+		api = "api/ticker"
+		item = self.get(api)
+		if item is not None:
 			item['datetime'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-			return item
-		else:
-			print("ERROR: error in fetching ticker, errcd=%d\n" % r.status_code)
-			return
+			self.tickers.append(item.copy())
 
+		return item
 
-	def fetch_trades():
+	def fetchTrades(self):
 		""" fetch the latest trade history """
-		req = requests.get("https://coincheck.com/api/trades")
-		if req.status_code == 200:
-			items = req.json()
-			return items
-		else:
-			print("ERROR: error in fetching trades, errcd=%d\n" % r.status_code)
+		api = "api/trades"
+
+		api = api + "?pair=btc_jpy"
+		items = self.get(api)
+
+		if items["success"] == False:
 			return
 
+		for item in items["data"]:
+			# print(item)
+			# self.books.append(item.copy())
+			self.books.append(item)
 
-	def fetch_order_books():
+		return items
+
+
+	def fetchOrderBooks(self):
 		""" fetch order book information
 		 - asks : sell order information
 		 - bids : buy order information
 		"""
-		req = requests.get("https://coincheck.com/api/order_books")
-		if req.status_code == 200:
-			item = req.json()
-			return item
-		else:
-			print("ERROR: error in fetching order books, errcd=%d\n" % r.status_code)
-			return
+		
+		api = "api/order_books"
+		item = self.get(api)
+	
+		if item is not None:
+			item['datetime'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+			# print(item)
+			self.books.append(item.copy())
+
+		return item
 
 
 	def ticker2str(ticker):
@@ -69,12 +104,31 @@ class coincheck:
 		line = "%(datetime)s,%(last)s,%(bid)s,%(ask)s,%(high)s,%(low)s,%(volume)s,%(timestamp)s" % ticker
 		return line
 
-
 	def trade2str(trade):
 		""" convert trade object to string """
-		line = "%(id)s,%(datetime)s,%(amount)s,%(rate)s,%(order_type)s,%(created_at)s" % trade
+		# print(trade)
+		line = "%(created_at)s,%(id)s,%(amount)s,%(rate)s,%(order_type)s" % trade
 		return line
 
+	def trades2str(trades):
+		line = ""
+		for trade in trades["data"]:
+			line = line + coincheck.trade2str(trade) + '\n'
+		return line
+
+	def book2str(books):
+		line = "%(datetime)s" % books
+		line = line + ",[ask]"
+		for ask in books["asks"]:
+			line = line + "(price=%.1f,volume=%.8f)" % (float(ask[0]), float(ask[1]))
+			# print(ask[0], ask[1])
+
+		line = line + ",[bid]"
+		for bid in books["bids"]:
+			line = line + "(price=%.1f,volume=%.8f)" % (float(bid[0]), float(bid[1]))
+			# print(bid[0], bid[1])
+
+		return line
 
 	def export_ticker_csv(tickers, outfile):
 		""" export ticker data to csv """
@@ -98,6 +152,7 @@ class coincheck:
 		""" TODO: implementation """
 		pass
 
+################################################################################
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description='coincheck API fetch module')
@@ -111,7 +166,7 @@ if __name__ == "__main__":
 	                    type=int, required=False, default=-1,
 	                    help='fetch count')
 	parser.add_argument('-t', '--fetch-ticker', dest='f_ticker',
-	                    required=False, action="store_true", default=True,
+	                    required=False, action="store_true", default=False,
 	                    help='fetch ticker')
 	parser.add_argument('-b', '--fetch-book', dest='f_book',
 	                    required=False, action="store_true", default=False,
@@ -129,13 +184,10 @@ if __name__ == "__main__":
 	lpcnt = args.count
 	processingflg = args.f_ticker | args.f_trade | args.f_book
 	if processingflg == False:
-		# terminate because of no work
-		sys.exit(0)
+		processingflg = args.f_ticker = True
 
-	# fetch from coincheck
-	tickers = []  # sum of ticker
-	books = []    # sum of book
-	trades = []   # sum of trades
+	# create coincheck instance
+	co = coincheck()
 
 	while True:
 		try:
@@ -144,19 +196,16 @@ if __name__ == "__main__":
 
 			if lpcnt > 0:
 				if args.f_ticker == True:
-					ticker = coincheck.fetch_ticker()
-					print(ticker)
-					tickers.append(ticker.copy())
+					ticker = co.fetchTicker()
+					print(coincheck.ticker2str(ticker))
   
 				if args.f_trade == True:
-					trade = coincheck.fetch_trades()
-					print(trade)
-					trades.append(trade.copy())
+					trades = co.fetchTrades()
+					print(coincheck.trades2str(trades))
   
 				if args.f_book == True:
-					book = coincheck.fetch_order_books()
-					print(book)
-					books.append(book.copy())
+					book = co.fetchOrderBooks()
+					print(coincheck.book2str(book))
 
 				lpcnt -= 1
 				time.sleep(args.interval)
@@ -183,11 +232,11 @@ if __name__ == "__main__":
 			coincheck.export_ticker_csv(tickers, outfile)
   
 		if len(trades) > 0:
-			outfile = args.outdir + "trade.csv"
+			outfile = args.outdir + "/trade.csv"
 			coincheck.export_trade_csv(trades, outfile)
   
 		if len(books) > 0:
-			outfile = args.outdir + "book.csv"
+			outfile = args.outdir + "/book.csv"
 			coincheck.export_order_book_csv(books, outfile)
 
 	sys.exit(0)

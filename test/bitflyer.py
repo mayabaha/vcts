@@ -74,8 +74,8 @@ class bitflyer:
 			except:
 				raise
 
-	def invoke(self, api):
-		""" invoke API to bitFlyer """
+	def get(self, api):
+		""" invoke API to bitFlyer by GET method """
 		if len(api) == 0:
 			print("ERROR: API is not specified")
 			return
@@ -91,8 +91,8 @@ class bitflyer:
 		item = req.json()
 		return item
 
-	def getMarketStatus(self, product_code=""):
-		""" get market status 
+	def fetchMarketStatus(self, product_code=""):
+		""" fetch market status 
 		 - NORMAL : active
 		 - BUSY : busy (not at a high load)
 		 - VERU BUSY : at a high load
@@ -106,25 +106,25 @@ class bitflyer:
 			api = api + "?product_code=%s" % (product_code)
 
 		# invoke 
-		item = self.invoke(api)
+		item = self.get(api)
 		if item is not None:
 			return item['status']
 		else:
 			return "FAIL"
 
-	def getBookStatus(self, product_code=""):
-		""" get book status """
+	def fetchBookStatus(self, product_code=""):
+		""" fetch book status """
 		api = "/v1/getboardstate"
 		if len(product_code) > 0:
 			api = api + "?product_code=%s" % (product_code)
 
-		item = self.invoke(api)
+		item = self.get(api)
 		if item is not None:
 			return item
 
-	def getMarket(self):
-		""" get market list """
-		items = self.invoke("/v1/getmarkets")
+	def fetchMarket(self):
+		""" fetch market list """
+		items = self.get("/v1/getmarkets")
 		if items is not None:
 			# clear old status
 			if len(self.markets) > 0:
@@ -142,8 +142,8 @@ class bitflyer:
 		else:
 			return
 	
-	def getTicker(self, product_code=""):
-		""" get the latest trade information
+	def fetchTicker(self, product_code=""):
+		""" fetch the latest trade information
 		 - 'product_code' : product name
 		 - 'timestamp' : current time (UTC)
 		 - 'tick_id' : tick ID
@@ -159,7 +159,7 @@ class bitflyer:
 		api = "/v1/getticker"
 		if len(product_code) > 0:
 			api = api + "?product_code=%s" % (product_code)
-		item = self.invoke(api)
+		item = self.get(api)
 		if item is not None:
 			ticker = {"timestamp"         : item["timestamp"],
 			          "product"           : item["product_code"],
@@ -193,21 +193,21 @@ class bitflyer:
 		else:
 			return
 
-	def getTickerBTC(self):
+	def fetchTickerBTC(self):
 		""" get ticker of BTC-JPY """
 		try:
 			return self.getTicker("BTC_JPY")
 		except:
 			raise
 
-	def getTickerETH(self):
+	def fetchTickerETH(self):
 		""" get ticker of ETH-BTC """
 		try:
 			return self.getTicker("ETH_BTC")
 		except:
 			raise
 
-	def getTickerBCH(self):
+	def fetchTickerBCH(self):
 		""" get ticker of BCH-BTC """
 		try:
 			return self.getTicker("BCH_BTC")
@@ -296,15 +296,15 @@ if __name__ == "__main__":
 			
 			if lpcnt > 0:
 				if pcb & bitflyer.PRODUCT_CODE_BTC:
-					ticker = bf.getTickerBTC()
+					ticker = bf.fetchTickerBTC()
 					print(bitflyer.ticker2str(ticker))
   
 				if pcb & bitflyer.PRODUCT_CODE_ETH:
-					ticker = bf.getTickerETH()
+					ticker = bf.fetchTickerETH()
 					print(bitflyer.ticker2str(ticker))
   
 				if pcb & bitflyer.PRODUCT_CODE_BCH:
-					ticker = bf.getTickerBCH()
+					ticker = bf.fetchTickerBCH()
 					print(bitflyer.ticker2str(ticker))
 
 				lpcnt -= 1
