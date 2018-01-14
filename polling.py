@@ -9,6 +9,8 @@ import datetime
 import argparse
 from coincheck import market
 import pybitflyer
+from multiprocessing import Queue
+import logging
 
 class polling:
 	"""
@@ -20,12 +22,15 @@ class polling:
 	 - https://github.com/yagays/pybitflyer
 	"""
 
-	def __init__(self, exch, outdir=""):
+	def __init__(self, exch, outdir="", loglv="INFO", reqq=None, rspq=None):
 		""" constructor
 		 - exch : coin exchange name
 		          "coincheck"
 		          "bitflyer"
 		 - outdir : CSV output directory
+		 - loglv  : log level
+		 - reqq   : request-to-polling queue
+		 - rspq   : response-from-polling queue
 		"""
 
 		# control parameters
@@ -33,6 +38,23 @@ class polling:
 		# self.MAXTICKER = 2	# 60sec * 60min * 24hr = 1day
 		self.MAXSMA = 60 * 60 * 24
 		self.MAXWMA = 60 * 60 * 24
+
+		# set logger
+		try:
+			self.logger = logging.getLogger("polling")
+			self.logger.setLevel(loglv)
+
+			outfile = outdir + "/polling.log"
+			fh = logging.FileHandler(outfile)
+
+			self.logger.addHandler(fh)
+			sh = logging.StreamHandler()
+			# self.logger.addHandler(sh)
+			formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(name)s:%(message)s')
+			fh.setFormatter(formatter)
+			sh.setFormatter(formatter)
+		except:
+			raise
 
 		# set exchange
 		self.exch = exch.lower()
@@ -43,24 +65,15 @@ class polling:
 		elif self.exch == "bitflyer":
 			self.bf = pybitflyer.API()
 		else:
-			print("ERROR: invalid exchange name")
+			self.logger.error("invalid exchange name")
 			return
 
 		# set CSV file name
 		if len(outdir) > 0:
-			if not os.path.exists(outdir):
-				# output directory check
-				try:
-					print("INFO: output directory %s not found. create..." % args.outdir)
-					os.mkdir(args.outdir)
-					if not os.path.exists(args.outdir):
-						print("ERROR: cannot create output directory")
-						return
-				except:
-					raise
 			self.tickercsv = outdir + "/ticker_" + self.exch + ".csv"
 		else:
 			self.tickercsv = ""
+		self.logger.info("CSV file=%s" % self.tickercsv)
 
 		# initiailze ticker
 		self.tickers = []
@@ -71,6 +84,11 @@ class polling:
 		self.sma60s = []
 		self.wma30s = []
 		self.wma60s = []
+
+		# request/response queue for multiprocessing
+		self.reqq = reqq
+		self.rspq = rspq
+
 
 	def ticker(self, product):
 		""" fetch ticker
@@ -144,7 +162,7 @@ class polling:
 
 		df = pd.read_csv(self.tickercsv)
 		if df is None:
-			print("ERROR: could not read CSV file")
+			self.logger.error("could not read CSV file")
 			return
 
 		nrow = len(df)
@@ -241,16 +259,54 @@ class polling:
 		self.append(self.wma60s, wma, self.MAXWMA)
 
 
+	def getxma(self, kind="sma30", idx=-1):
+		""" get xMA (SMA or WMA)
+		 - kind : xMA kind ("SMA30", "SMA60", "WMA30" or "WMA60")
+		 - idx : index of ticker history, -1 indicates last entry
+		"""
+		kind = kind.upper()
+		if kind == "SMA30":
+			return self.sma30s[idx]
+		elif kind == "SMA60":
+			return self.sma60s[idx]
+		elif kind == "WMA30":
+			return self.wma30s[idx]
+		elif kind == "WMA60":
+			return self.wma60s[idx]
+		else:
+			return 0
+
+
+	def checkRequestQueue(self):
+		""" check request queue """
+		if self.reqq.empty():
+			return
+
+		d = self.reqq.get()
+		if d["cmd"] == "get ticker":
+			# process "get ticker" command
+			ticker = self.getticker()
+			sma30 = self.getxma("SMA30")
+			sma60 = self.getxma("SMA60")
+			wma30 = self.getxma("WMA30")
+			wma60 = self.getxma("WMA60")
+			ticker["sma30"] = sma30
+			ticker["sma60"] = sma60
+			ticker["wma30"] = wma30
+			ticker["wma60"] = wma60
+			self.rspq.put(ticker)
+
+
 	def pollticker(self, product, interval=1, count=-1):
 		""" polling ticker """
-    
+
 		# product code check
 		tmpprod = product.lower()
 		if self.cc is not None:	# coincheck
 			if tmpprod == "btc_jpy":
 				pass
 			else:
-				print("ERROR: %s is not supported by coincheck" % product)
+				self.logger.critical("ERROR: %s is not supported by coincheck" % product)
 				return
 		elif self.bf is not None:	# bitflyer
 			if tmpprod == "btc_jpy":
@@ -260,17 +316,17 @@ class polling:
 			elif tmpprod == "fx_btc_jpy":
 				pass
 			else:
-				printf("ERROR: %s is not supported by bitflyer" % product)
+				self.logger.critical("ERROR: %s is not supported by bitflyer" % product)
 				return
     
 		# fetch interval
 		if interval <= 0:
-			print("ERROR: interval is NOT natural number")
+			self.logger.critical("ERROR: interval is NOT natural number")
 			return
     
 		# initialize loop count
 		lpcnt = count
-    
+
 		# polling
 		while True:
 			try:
@@ -288,9 +344,12 @@ class polling:
 						self.wma60()
 
 						# debug
-						print("%s SMA30=%.1f SMA60=%.1f WMA30=%.1f WMA60=%.1f" % (self.ticker2str(ticker), self.sma30s[-1], self.sma60s[-1], self.wma30s[-1], self.wma60s[-1]))
+						self.logger.debug("%s,SMA30=%.1f,SMA60=%.1f,WMA30=%.1f,WMA60=%.1f" % (self.ticker2str(ticker), self.sma30s[-1], self.sma60s[-1], self.wma30s[-1], self.wma60s[-1]))
 					else:
-						print("ERROR: could not get ticker")
+						self.logger.warning("could not get ticker")
+
+					# check request queue
+					self.checkRequestQueue()
     
 					lpcnt -= 1
 					time.sleep(interval)
@@ -300,41 +359,3 @@ class polling:
 			except KeyboardInterrupt:
 				break
 			
-################################################################################
-
-if __name__ == "__main__":
-	parser = argparse.ArgumentParser(description='cryptcoin market polling module')
-	parser.add_argument('-o', '--output-dir', metavar='dir', dest='outdir',
-	                    type=str, required=False, default='',
-	                    help='output directory for .csv file')
-	parser.add_argument('-i', '--interval', metavar='val', dest='interval', 
-	                    type=int, required=False, default=1,
-	                    help='polling interval [sec]')
-	parser.add_argument('-c', metavar='count', dest='count',
-	                    type=int, required=False, default=-1,
-	                    help='fetch count. negative value stands for infinite loop')
-	parser.add_argument('-e', metavar='exch', dest='exch',
-	                    type=str, required=True, default='',
-	                    choices=('coincheck', 'bitflyer'),
-	                    help='exchange name (\'coincheck\' or \'bitflyer\')')
-	parser.add_argument('-p', metavar='prod', dest='prod',
-	                    type=str, required=False, default='btc_jpy',
-	                    help='product name\n'
-	                    '\'btc_jpy\' is available on coincheck.\n'
-	                    '\'btc_jpy\' or \'eth_btc\' is available on bitflyer')
-	args = parser.parse_args()
-
-	# exchange check
-	tmpexch = args.exch.lower()
-	if tmpexch != "coincheck" and tmpexch != "bitflyer":
-		print("ERROR: %s is not supported as exchange" % args.exch)
-		sys.exit(1)
-
-	poll = polling(args.exch, args.outdir)
-
-	# polling
-	poll.pollticker(args.prod, args.interval, args.count)
-
-	sys.exit(0)
-
-
