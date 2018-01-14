@@ -1,0 +1,37 @@
+# VCTS : Virtual Coin Transaction System initialize file
+
+# global parameters
+[global]
+# exchange name
+# 'coincheck' or 'bitflyer'
+exchange = bitflyer
+
+# product code
+# coincheck : 'BTC_JPY' 
+# bitflyer  : 'BTC_JPY', 'ETH_BTC', 'FX_BTC_JPY'
+product = BTC_JPY
+
+# API Key
+apikey = inputhere
+apisecret = inputhere
+
+#---------------------------------------------------
+# Polling module parameters
+[polling]
+# polling interval (unit=second)
+interval = 1
+
+# polling count (negative value indidates infinite loop)
+count = -1
+
+#---------------------------------------------------
+# scalping module parameters
+[scalping]
+# scalping interval (unit=second)
+interval = 1
+
+# scalping amount of size
+size = 0.001
+
+# expiration date
+expiration_date = 10000
