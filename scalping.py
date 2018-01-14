@@ -34,7 +34,10 @@ class scalping:
 			self.logger = logging.getLogger("scalping")
 			self.logger.setLevel(loglv)
 
-			outfile = outdir + "/scalping.log"
+			if len(outdir) > 0:
+				outfile = outdir + "/scalping.log"
+			else:
+				outfile = "scalping.log"
 			fh = logging.FileHandler(outfile)
 
 			self.logger.addHandler(fh)

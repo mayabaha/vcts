@@ -197,10 +197,10 @@ if __name__ == "__main__":
 	parser.add_argument('--logdir', metavar='dir', dest='logdir',
 	                    type=str, required=False, default='',
 	                    help='log output directory')
-	parser.add_argument('--log', metavar='dir', dest='loglevel',
+	parser.add_argument('--log', metavar='lv', dest='loglevel',
 	                    type=str, required=False, default='INFO',
 	                    help='log level (CRITICAL, ERROR, WARNING, INFO or DEBUG')
-	parser.add_argument('--ini', metavar='ini', dest='inifile',
+	parser.add_argument('--ini', metavar='file', dest='inifile',
 	                    type=str, required=True, default='',
 	                    help='path to .ini file')
 	args = parser.parse_args()

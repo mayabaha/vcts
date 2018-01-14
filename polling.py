@@ -44,7 +44,10 @@ class polling:
 			self.logger = logging.getLogger("polling")
 			self.logger.setLevel(loglv)
 
-			outfile = outdir + "/polling.log"
+			if len(outdir) > 0:
+				outfile = outdir + "/polling.log"
+			else:
+				outfile = "polling.log"
 			fh = logging.FileHandler(outfile)
 
 			self.logger.addHandler(fh)
