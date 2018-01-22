@@ -8,18 +8,21 @@ import datetime
 import argparse
 import configparser
 import logging
-from multiprocessing import Process
-from multiprocessing import Queue
+from multiprocessing import Process, Queue, Event
+import signal
 
 import polling
 import scalping
-
+import sell
 
 # log directory
 logdir = ""
 
 # log level
 loglevel = "INFO"
+
+# initialize stop flag
+stop_flag = Event()
 
 class vcts:
 	""" VCTS: Virtual Coin Transaction System class """
@@ -45,9 +48,18 @@ class vcts:
 		self.scalpsize = 0
 		self.scalpexp = 0
 
+		# sell module
+		self.sell = None
+		self.p_sell = None
+		self.sellitv = 0
+		self.sellsize = 0
+		self.sellprofbdr = 0
+		self.sellcutbdr = 0
+
 		# inter-processing communication
 		self.poll_reqq = None
 		self.poll_rspq = None
+		self.q_get_tov = 0
 
 		# log info
 		self.logdir = logdir
@@ -74,6 +86,7 @@ class vcts:
 			self.setProduct(inifile.get('global', 'product'))
 			self.setAPIKey(inifile.get('global', 'apikey'))
 			self.setAPISecret(inifile.get('global', 'apisecret'))
+			self.q_get_tov = int(inifile.get('global', 'q_get_tov'))
 
 			# polling parameters
 			self.pollitv   = int(inifile.get('polling', 'interval'))
@@ -84,6 +97,12 @@ class vcts:
 			self.scalpsize = float(inifile.get('scalping', 'size'))
 			self.scalpexp  = int(inifile.get('scalping', 'expiration_date'))
 
+			# sell parameters
+			self.sellitv     = int(inifile.get('sell', 'interval'))
+			self.sellsize    = float(inifile.get('sell', 'size'))
+			self.sellprofbdr = float(inifile.get('sell', 'profit_border'))
+			self.sellcutbdr  = float(inifile.get('sell', 'cut_border'))
+
 		except configparser.NoSectionError as e:
 			logging.critical("section '%s' not found in %s" % (e.args, args.inifile))
 			sys.exit(1)
@@ -92,10 +111,11 @@ class vcts:
 			sys.exit(1)
 
 		# debug
-		logging.info("[global] exchange=%s, product=%s, apikey=%s, apisecret=%s" % \
-		      (self.exch, self.prod, self.apikey, self.apisecret))
-		logging.info("[polling]  interval=%d, count=%d" % (self.pollitv, self.pollcount))
-		logging.info("[scalping] interval=%d, size=%f, expiration=%d" % (self.scalpitv, self.scalpsize, self.scalpexp))
+		print("[global] exchange=%s, product=%s, apikey=%s, apisecret=%s, q_get_tov=%d" % \
+		      (self.exch, self.prod, self.apikey, self.apisecret, self.q_get_tov))
+		print("[polling]  interval=%d, count=%d" % (self.pollitv, self.pollcount))
+		print("[scalping] interval=%d, size=%f, expiration=%d" % (self.scalpitv, self.scalpsize, self.scalpexp))
+		print("[sell] size=%f, profit_border=%.3f, cut_border=%.3f" % (self.sellsize, self.sellprofbdr, self.sellcutbdr))
 
 
 	def setExchange(self, exch):
@@ -119,7 +139,7 @@ class vcts:
 		 - key : API KEY of exchange
 		"""
 		if len(key) > 0:
-			self.apikey = key.lower()
+			self.apikey = key
 
 
 	def setAPISecret(self, sec):
@@ -127,8 +147,7 @@ class vcts:
 		 - sec : API Secret of exchange
 		"""
 		if len(sec) > 0:
-			self.apisecret = sec.lower()
-
+			self.apisecret = sec
 
 	def run(self):
 		""" run VCTS """
@@ -140,7 +159,9 @@ class vcts:
 			self.poll = polling.polling(self.exch,
 			                            self.logdir, self.loglevel,
 			                            self.poll_reqq,
-			                            self.poll_rspq)
+			                            self.poll_rspq,
+			                            stop_flag,
+			                            self.q_get_tov)
 			self.p_poll = Process(target=self.poll.pollticker, 
 		                        args=(self.prod, self.pollitv, self.pollcount))
 			self.p_poll.start()
@@ -151,15 +172,44 @@ class vcts:
 			                               self.apisecret,
 			                               self.logdir, self.loglevel,
 			                               self.poll_reqq,
-			                               self.poll_rspq)
+			                               self.poll_rspq,
+			                               stop_flag,
+			                               self.q_get_tov)
 			self.p_scalp = Process(target=self.scalp.runscalp,
 			                       args=(self.prod, self.scalpitv, self.scalpsize, self.scalpexp))
 			self.p_scalp.start()
 
+			# execute sell module
+			self.sell = sell.sell(self.exch, 
+			                      self.apikey,
+			                      self.apisecret,
+			                      self.logdir, self.loglevel,
+			                      self.poll_reqq,
+			                      self.poll_rspq,
+			                      stop_flag,
+			                      self.q_get_tov)
+			self.p_sell = Process(target=self.sell.runsell,
+			                      args=(self.prod, self.sellitv, self.sellsize, self.sellprofbdr, self.sellcutbdr))
+			self.p_sell.start()
+
+			# set signal handler
+			signal.signal(signal.SIGINT, signalHandler)
+			signal.signal(signal.SIGTERM, signalHandler)
+			signal.pause()
+
 			self.p_poll.join()
 			self.p_scalp.join()
+			self.p_sell.join()
+
+			self.p_poll.terminate()
+			self.p_scalp.terminate()
+			self.p_sell.terminate()
 		except:
 			raise
+
+
+def signalHandler(signal, handler):
+	stop_flag.set()
 
 
 def runvcts(inifile="", logdir="", loglevel=""):

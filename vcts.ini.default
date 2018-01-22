@@ -15,6 +15,9 @@ product = BTC_JPY
 apikey = inputhere
 apisecret = inputhere
 
+# timeout value getting from queue
+q_get_tov = 10
+
 #---------------------------------------------------
 # Polling module parameters
 [polling]
@@ -35,3 +38,18 @@ size = 0.001
 
 # expiration date
 expiration_date = 10000
+
+#---------------------------------------------------
+# sell module parameters
+[sell]
+# polling interval (unit=second)
+interval = 1
+
+# amount of sell size
+size = 0.001
+
+# profit border [%]
+profit_border = 1.01
+
+# cut border [%]
+cut_border = 0.995

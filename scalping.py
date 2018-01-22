@@ -4,6 +4,7 @@
 import time
 from multiprocessing import Queue
 import logging
+import signal
 
 from coincheck import market
 from coincheck import order
@@ -12,7 +13,7 @@ import pybitflyer
 class scalping:
 	""" scalping class """
 
-	def __init__(self, exch, apikey, apisec, outdir, loglv, poll_reqq, poll_rspq):
+	def __init__(self, exch, apikey, apisec, outdir, loglv, poll_reqq, poll_rspq, stop_flag, q_get_tov):
 		""" constructor
 		
 		 - exch      : exchange ("coincheck" or "bitflyer")
@@ -22,12 +23,15 @@ class scalping:
 		 - loglv     : log level
 		 - poll_reqq : request-to-polling queue
 		 - poll_rspq : response-from-polling queue
+		 - stop_flag : stop flag
+		 - q_get_tov : TOV getting from queue
 		"""
 
 		self.exch = exch
 		self.apikey = apikey
 		self.apisecret = apisec
 		self.outdir = outdir
+		self.q_get_tov = q_get_tov
 		
 		# set logger
 		try:
@@ -68,6 +72,9 @@ class scalping:
 		self.poll_reqq = poll_reqq
 		self.poll_rspq = poll_rspq
 
+		# set stop flag
+		self.stop_flag = stop_flag
+
 
 	def getTicker(self):
 		""" get ticker from polling object """
@@ -77,7 +84,7 @@ class scalping:
 
 		req = {"cmd" : "get ticker"}
 		self.poll_reqq.put(req)
-		ticker = self.poll_rspq.get()
+		ticker = self.poll_rspq.get(timeout=self.q_get_tov)
 
 		#debug
 		# self.logger.debug("ticker=%s" % str(ticker))
@@ -135,9 +142,34 @@ class scalping:
 			ticker = self.getTicker()
 
 		if ticker is not None:
-			return ((ticker["best_ask"] + ticker["best_bid"]) / 2.0)
+			minprice = min(ticker["best_ask"], ticker["best_bid"])
+			diffprice = abs(ticker["best_ask"] - ticker["best_bid"])
+			return (minprice + (diffprice / 4.0))
+			# return ((ticker["best_ask"] + ticker["best_bid"]) / 2.0)
 		else:
 			return 0.0
+
+
+	def isHealth(self):
+		""" determine whether exchange status is normal or not """
+		try:
+			if self.ccpublic is not None:
+				# since API is not supported, assume always normal
+				return True
+			elif self.bfpublic is not None:
+				status = self.bfpublic.gethealth();
+				if status['status'] != "NORMAL":
+					self.logger.debug("server status = %s" % status['status'])
+					return False
+				else:
+					return True
+			else:
+				return True
+					
+		except JSONDecodeError:
+			# communication error occurred
+			self.logger.warning("could not get server status")
+			return False
 
 
 	def entryLong(self, prod, price, size, expiredate):
@@ -151,6 +183,7 @@ class scalping:
 
 		if self.bfprivate is not None:
 			try:
+				""" kari for debug
 				self.bfprivate.sendchildorder(product_code = prod,
 				                              child_order_type = "LIMIT",
 				                              side = "BUY",
@@ -158,6 +191,7 @@ class scalping:
 				                              size = size,
 				                              minute_to_expire = expiredate,
 				                              time_in_force = "GTC")
+				"""
 				return True
 			except pybitflyer.exception.AuthException as e:
 				self.logger.error(str(e))
@@ -178,27 +212,30 @@ class scalping:
 		 - expiredate : expiration date of buy/sell order
 		"""
 
+		# ignore interrupt
+		signal.signal(signal.SIGINT, signal.SIG_IGN)
+		signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
 		midprice = 0
 		before_midprice = 0
 		# pos = 0 # Long : 1, Short : -1, No position : 0
-		
-		# get medium price as initial value
-		midprice = self.getMidPrice()
 		
 		while True:
 			try:
 				time.sleep(interval)
 				# self.logger.debug(str(pos))
 
+				# terminate if stop flag is set
+				if self.stop_flag.is_set():
+					self.logger.debug("terminate signal received, bye")
+					break
+
 				# get medium price
 				midprice = self.getMidPrice()
 				
 				# get server status (bitFlyer ONLY because coincheck does not support this)
-				if self.bfpublic is not None:
-					status = self.bfpublic.gethealth();
-					if status['status'] != "NORMAL":
-						self.logger.debug("server status = %s" % status['status'])
-						continue
+				if self.isHealth() == False:
+					continue
 
 				# 前回の観測点より価格が高く、ノーポジの時
 				if midprice - before_midprice > 0:
@@ -208,7 +245,7 @@ class scalping:
 
 				# 前回の観測点よりも価格が低い場合はスルー
 				if before_midprice - midprice > 0:
-					self.logger.info("Time to Short. Do nothing, midprice=%.1f, side=Short" % midprice)
+					self.logger.debug("Time to Short. Do nothing, midprice=%.1f, side=Short" % midprice)
 
 				before_midprice = midprice
 

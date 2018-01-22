@@ -11,6 +11,7 @@ from coincheck import market
 import pybitflyer
 from multiprocessing import Queue
 import logging
+import signal
 
 class polling:
 	"""
@@ -22,15 +23,17 @@ class polling:
 	 - https://github.com/yagays/pybitflyer
 	"""
 
-	def __init__(self, exch, outdir="", loglv="INFO", reqq=None, rspq=None):
+	def __init__(self, exch, outdir="", loglv="INFO", reqq=None, rspq=None, stop_flag=None, q_get_tov=None):
 		""" constructor
-		 - exch : coin exchange name
-		          "coincheck"
-		          "bitflyer"
-		 - outdir : CSV output directory
-		 - loglv  : log level
-		 - reqq   : request-to-polling queue
-		 - rspq   : response-from-polling queue
+		 - exch      : coin exchange name
+		               "coincheck"
+		               "bitflyer"
+		 - outdir    : CSV output directory
+		 - loglv     : log level
+		 - reqq      : request-to-polling queue
+		 - rspq      : response-from-polling queue
+		 - stop_flag : stop flag
+		 - q_get_tov : TOV getting from queue
 		"""
 
 		# control parameters
@@ -91,6 +94,10 @@ class polling:
 		# request/response queue for multiprocessing
 		self.reqq = reqq
 		self.rspq = rspq
+		self.q_get_tov = q_get_tov
+
+		# set stop flag
+		self.stop_flag = stop_flag
 
 
 	def ticker(self, product):
@@ -117,14 +124,17 @@ class polling:
 				ticker["best_ask"] = tickercc["ask"]
 				ticker["last"] = tickercc["last"]
 		elif self.bf is not None:	# bitflyer
-			tickerbf = self.bf.ticker(product_code=product.upper())
-			if tickerbf is not None:
-				ticker["product"] = product
-				ticker["datetime"] = currdate
-				ticker["timestamp"] = tickerbf["timestamp"]
-				ticker["best_bid"] = float(tickerbf["best_bid"])
-				ticker["best_ask"] = float(tickerbf["best_ask"])
-				ticker["last"] = float(tickerbf["ltp"])
+			try:
+				tickerbf = self.bf.ticker(product_code=product.upper())
+				if tickerbf is not None:
+					ticker["product"] = product
+					ticker["datetime"] = currdate
+					ticker["timestamp"] = tickerbf["timestamp"]
+					ticker["best_bid"] = float(tickerbf["best_bid"])
+					ticker["best_ask"] = float(tickerbf["best_ask"])
+					ticker["last"] = float(tickerbf["ltp"])
+			except:
+				pass
 		else:
 			pass
 
@@ -282,22 +292,23 @@ class polling:
 
 	def checkRequestQueue(self):
 		""" check request queue """
-		if self.reqq.empty():
-			return
-
-		d = self.reqq.get()
-		if d["cmd"] == "get ticker":
-			# process "get ticker" command
-			ticker = self.getticker()
-			sma30 = self.getxma("SMA30")
-			sma60 = self.getxma("SMA60")
-			wma30 = self.getxma("WMA30")
-			wma60 = self.getxma("WMA60")
-			ticker["sma30"] = sma30
-			ticker["sma60"] = sma60
-			ticker["wma30"] = wma30
-			ticker["wma60"] = wma60
-			self.rspq.put(ticker)
+		while True:
+			if self.reqq.empty():
+				return
+  
+			d = self.reqq.get()
+			if d["cmd"] == "get ticker":
+				# process "get ticker" command
+				ticker = self.getticker()
+				sma30 = self.getxma("SMA30")
+				sma60 = self.getxma("SMA60")
+				wma30 = self.getxma("WMA30")
+				wma60 = self.getxma("WMA60")
+				ticker["sma30"] = sma30
+				ticker["sma60"] = sma60
+				ticker["wma30"] = wma30
+				ticker["wma60"] = wma60
+				self.rspq.put(ticker)
 
 
 	def pollticker(self, product, interval=1, count=-1):
@@ -330,11 +341,23 @@ class polling:
 		# initialize loop count
 		lpcnt = count
 
+		# ignore interrupt
+		signal.signal(signal.SIGINT, signal.SIG_IGN)
+		signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
 		# polling
 		while True:
 			try:
+				# terminate if stop flag is set
+				if self.stop_flag.is_set():
+					self.logger.debug("terminate signal received, bye")
+					break
+
 				if count == -1:		# infinite loop is specified
 					lpcnt = 1;
+				# terminate if stop flag is set
+				if self.stop_flag.is_set():
+					break
     
 				if lpcnt > 0:
 					ticker = self.ticker(product)
