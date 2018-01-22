@@ -104,3 +104,4 @@ ENV/
 vcts.ini
 
 *.swp
+tags
